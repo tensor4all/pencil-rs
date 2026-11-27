@@ -14,9 +14,9 @@ include = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "NOTICE.md", "src
 features = ["system"]
 
 [features]
-default = []
-# Same name as tenferro-mpi's. A backend is mandatory: rsmpi-rt refuses to compile
-# without one. `system` is rsmpi-rt's bindgen backend (MPI headers, mpicc and libclang
+default = ["system"]
+# Same name as tenferro-mpi's, on by default. A backend is mandatory: rsmpi-rt refuses to
+# compile without one; opt out with default-features = false. `system` is rsmpi-rt's bindgen backend (MPI headers, mpicc and libclang
 # at build time). The `runtime` (mpi-native-sys) backend is deliberately not offered:
 # in rsmpi-rt 0.9.0 it stubs MPI_Allreduce, MPI_Alltoallv, MPI_Cart_create, ...
 system = ["mpi/mpi-sys-backend"]

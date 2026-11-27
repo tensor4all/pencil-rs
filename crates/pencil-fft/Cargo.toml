@@ -27,7 +27,7 @@ realfft = "~3.5.0"
 rustfft = "~6.4.1"
 thiserror.workspace = true
 mpi = { workspace = true, optional = true }
-pencil-array = { version = "0.1.0", path = "../pencil-array", optional = true }
+pencil-array = { version = "0.1.0", path = "../pencil-array", default-features = false, optional = true }
 pencil-fftw = { version = "0.1.0", path = "../pencil-fftw", optional = true }
 
 [[test]]

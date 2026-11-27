@@ -283,7 +283,7 @@ jobs:
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
               cargo test -p pencil-io \
-                --no-default-features --features mpi --lib --locked \
+                --no-default-features --features system --lib --locked \
                 tests::mpi_payload_limit_precedes_allocation -- \
                 --exact --ignored --nocapture --test-threads=1
           done

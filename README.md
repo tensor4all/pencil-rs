@@ -890,12 +890,15 @@ library name `mpi`, the same crate and version as `tenferro-mpi`, so an applicat
 using both shares one `Communicator` type and one MPI initialization. Cargo does not
 unify 0.8.x with 0.9.x: keep your own direct dependency on the same version.
 
-`rsmpi-rt` needs exactly one backend, and none is on by default. Enable the feature
-named `system` on every pencil crate you use (`pencil-array`, `pencil-fft`,
-`pencil-io`); it is the same spelling `tenferro-mpi` uses:
+`rsmpi-rt` needs exactly one backend and refuses to compile without one. The workspace
+dependency keeps `default-features = false`, and the backend is chosen by the feature
+named `system` (same spelling as `tenferro-mpi`). `pencil-array` and `pencil-io` enable
+`system` by default, so a plain `cargo test` works. `pencil-fft` stays MPI-free by
+default; its `system` feature implies `distributed`. A downstream that wants to choose
+the backend itself opts out of the default:
 
 ```toml
-pencil-array = { version = "0.1.0", features = ["system"] }
+pencil-array = { version = "0.1.0", default-features = false, features = ["system"] }
 pencil-fft = { version = "0.1.0", features = ["system"] }   # implies `distributed`
 mpi = { package = "rsmpi-rt", version = "0.9.0", default-features = false }
 ```
