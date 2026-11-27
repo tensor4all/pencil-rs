@@ -2740,8 +2740,8 @@ where
             scratch.resize_with(metadata.maximum_count, || seed);
         }
 
-        for source_rank in 0..size {
-            let block = &metadata.blocks[source_rank];
+        // Pre-existing code; rewritten only because newer clippy (needless_range_loop) rejects the index loop.
+        for (source_rank, block) in metadata.blocks.iter().enumerate().take(size) {
             if source_rank == root {
                 unpack_block(global, view.as_slice(), view.pencil(), block);
             } else {

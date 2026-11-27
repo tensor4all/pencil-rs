@@ -9,9 +9,15 @@ description = "MPI-IO for pencil arrays and optional serial or parallel HDF5"
 readme = "README.md"
 include = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "NOTICE.md", "src/**/*.rs", "tests/**/*.rs", "examples/**/*.rs"]
 
+[package.metadata.docs.rs]
+# rsmpi-rt does not compile without a backend.
+features = ["system"]
+
 [features]
-default = ["mpi"]
+default = ["mpi", "system"]
 mpi = ["dep:mpi", "dep:pencil-array"]
+# Same name as tenferro-mpi's; implies `mpi`. See pencil-array for why there is no `runtime`.
+system = ["mpi", "pencil-array/system"]
 hdf5 = ["dep:hdf5-metno", "dep:hdf5-metno-sys"]
 parallel-hdf5 = ["mpi", "hdf5", "hdf5-metno/mpio", "hdf5-metno-sys/mpio"]
 
@@ -19,7 +25,7 @@ parallel-hdf5 = ["mpi", "hdf5", "hdf5-metno/mpio", "hdf5-metno-sys/mpio"]
 mpi = { workspace = true, optional = true }
 num-complex = "0.4.6"
 thiserror.workspace = true
-pencil-array = { version = "0.1.0", path = "../pencil-array", optional = true }
+pencil-array = { version = "0.1.0", path = "../pencil-array", default-features = false, optional = true }
 hdf5-metno = { version = "=0.12.0", default-features = false, optional = true }
 hdf5-metno-sys = { version = "=0.11.0", optional = true }
 

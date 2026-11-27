@@ -9,6 +9,18 @@ description = "MPI-distributed pencil arrays and transposes"
 readme = "README.md"
 include = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "NOTICE.md", "src/**/*.rs", "tests/**/*.rs", "examples/**/*.rs"]
 
+[package.metadata.docs.rs]
+# rsmpi-rt does not compile without a backend.
+features = ["system"]
+
+[features]
+default = ["system"]
+# Same name as tenferro-mpi's, on by default. A backend is mandatory: rsmpi-rt refuses to
+# compile without one; opt out with default-features = false. `system` is rsmpi-rt's bindgen backend (MPI headers, mpicc and libclang
+# at build time). The `runtime` (mpi-native-sys) backend is deliberately not offered:
+# in rsmpi-rt 0.9.0 it stubs MPI_Allreduce, MPI_Alltoallv, MPI_Cart_create, ...
+system = ["mpi/mpi-sys-backend"]
+
 [dependencies]
 mpi = { workspace = true, features = ["complex"] }
 num-complex = "0.4.6"

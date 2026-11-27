@@ -5,10 +5,10 @@ pencil transforms. Requires Rust 1.96 or newer. The default RustFFT/RealFFT CPU
 backend is MPI-free and needs neither native FFTW nor Julia.
 
 - Default features: local transforms using RustFFT/RealFFT.
-- `distributed`: adds MPI and `pencil-array`. Requires native MPI headers,
-  `mpicc`, and libclang by default; use the same MPI implementation to build and run.
-  Experimental [rsmpi-rt support](https://github.com/nogaki/pencil-rs#experimental-runtime-mpi-rsmpi-rt)
-  instead loads MPIwrapper at runtime without native MPI build tools.
+- `system`: implies `distributed` (adds MPI and `pencil-array`) with rsmpi-rt 0.9.0's system backend, as in `tenferro-mpi`. Requires native MPI headers,
+  `mpicc`, and libclang; use the same MPI implementation to build and run.
+  See [Choosing the MPI backend](https://github.com/nogaki/pencil-rs#choosing-the-mpi-backend); there is no `runtime` backend yet.
+- `distributed`: the MPI API itself; it does not select a backend, so use `system`.
 - `fftw`: exposes explicit native FFTW constructors through `pencil-fftw`.
   Enabling it does not switch the default provider. Explicit FFTW construction
   requires the separately installed Linux `libfftw3.so.3` (f64) or

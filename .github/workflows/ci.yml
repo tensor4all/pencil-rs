@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo tree -p pencil-fft --no-default-features --edges normal --locked | tee /tmp/pencil-fft-local-tree.txt
-          if grep -Eq '(^|[[:space:]])(mpi|pencil-array|pencil-fftw)([[:space:]]|$)' /tmp/pencil-fft-local-tree.txt; then
+          if grep -Eq '(^|[[:space:]])(mpi|rsmpi-rt|pencil-array|pencil-fftw)([[:space:]]|$)' /tmp/pencil-fft-local-tree.txt; then
             echo "local pencil-fft unexpectedly depends on MPI or pencil-array" >&2
             exit 1
           fi
@@ -116,7 +116,7 @@ jobs:
           set -euo pipefail
           cargo tree -p pencil-io --no-default-features --features hdf5 \
             --edges normal,build --prefix none --locked | tee /tmp/pencil-io-serial-tree.txt
-          if grep -Eq '^(mpi|mpi-sys|pencil-array|build-probe-mpi) ' /tmp/pencil-io-serial-tree.txt; then
+          if grep -Eq '^(mpi|rsmpi-rt|mpi-sys|rsmpi-sys|pencil-array|build-probe-mpi) ' /tmp/pencil-io-serial-tree.txt; then
             echo "serial pencil-io unexpectedly depends on MPI or pencil-array" >&2
             exit 1
           fi
@@ -132,106 +132,46 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc -p pencil-io --no-default-features --features hdf5 --no-deps --locked
 
-  rsmpi-rt:
+  downstream-communicator:
+    # A downstream crate (stand-in for sphaira-rs) with its own direct rsmpi-rt
+    # dependency must share one rsmpi-rt, hence one Communicator type, with pencil-array.
+    # Only the `system` backend is built and tested; rsmpi-rt 0.9.0's runtime
+    # (mpi-native-sys) backend stubs calls pencil-array needs and is NOT supported.
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check runtime MPI without native build tools
-        env:
-          MPICC: /nonexistent/mpicc
-          LIBCLANG_PATH: /nonexistent/libclang
-          CC: /nonexistent/cc
-        run: |
-          set -euo pipefail
-          # The opt-in patch intentionally regenerates the upstream lockfile.
-          cargo --config tools/rsmpi-rt.toml check -p pencil-array -p pencil-fft \
-            --features distributed,mpi/mpi-rt-sys-backend --all-targets
-          cargo --config tools/rsmpi-rt.toml tree -p pencil-array -p pencil-fft \
-            --features distributed,mpi/mpi-rt-sys-backend --edges normal,build \
-            --prefix none --locked | tee /tmp/rsmpi-rt-tree.txt
-          grep -q '^mpi-rt-sys ' /tmp/rsmpi-rt-tree.txt
-          if grep -Eq '^(mpi-sys|build-probe-mpi|bindgen|libffi|libffi-sys) ' /tmp/rsmpi-rt-tree.txt; then
-            echo "runtime MPI unexpectedly depends on native build tools" >&2
-            exit 1
-          fi
-          cargo --config tools/rsmpi-rt.toml test -p pencil-array -p pencil-fft \
-            --features distributed,mpi/mpi-rt-sys-backend --locked --no-run \
-            --test topology --test alltoallv_transpose --test collectives --test spatial_remap \
-            --test distributed_c2c --test distributed_c2r --test distributed_r2r --test distributed_mixed
-
-      - name: Install MPIwrapper build and runtime dependencies
+      - name: Install MPI toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libopenmpi-dev openmpi-bin cmake gfortran
+          sudo apt-get install --yes libopenmpi-dev openmpi-bin libclang-dev
 
-      - name: Record toolchain versions
+      - name: Exactly one rsmpi-rt, at 0.9.0
         run: |
           set -euo pipefail
-          . /etc/os-release; echo "$PRETTY_NAME"
-          echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
-          git rev-parse HEAD
-          rustc -Vv
-          cargo -V
-          ompi_info --version | sed -n 1p
-          dpkg-query -W openmpi-bin libopenmpi-dev
+          for dir in . tools/downstream-check; do
+            (cd "$dir"
+             cargo tree -i rsmpi-rt --features system --locked | tee /tmp/rsmpi-rt-inverse.txt
+             test "$(grep -c '^rsmpi-rt v' /tmp/rsmpi-rt-inverse.txt)" = 1
+             grep -q '^rsmpi-rt v0\.9\.0' /tmp/rsmpi-rt-inverse.txt
+             cargo tree -d --features system --locked | tee /tmp/duplicates.txt
+             if grep -q '^rsmpi-rt ' /tmp/duplicates.txt; then echo "duplicate rsmpi-rt" >&2; exit 1; fi)
+          done
 
-      - name: Checkout MPIwrapper
-        uses: actions/checkout@v4
-        with:
-          repository: eschnett/MPIwrapper
-          ref: 966f4231c96153a08295fc7d0bcbd65e916a73fd
-          path: target/mpiwrapper
-
-      - name: Build MPIwrapper
-        run: |
-          cmake -S target/mpiwrapper -B target/mpiwrapper/build
-          cmake --build target/mpiwrapper/build --parallel 2
-          echo "MPI_RT_LIB=$PWD/target/mpiwrapper/build/libmpiwrapper.so" >> "$GITHUB_ENV"
-
-      - name: Run runtime MPI integration tests
+      - name: Pass a downstream communicator into pencil-array on two ranks
+        working-directory: tools/downstream-check
         run: |
           set -euo pipefail
-          for n in 1 4; do
-            timeout --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-              cargo --config tools/rsmpi-rt.toml test -p pencil-array \
-              --features mpi/mpi-rt-sys-backend --test topology --locked -- --test-threads=1
-          done
-          for n in 1 4 6; do
-            for suite in alltoallv_transpose collectives distributed_c2c distributed_c2r distributed_r2r distributed_mixed; do
-              timeout --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-                cargo --config tools/rsmpi-rt.toml test -p pencil-array -p pencil-fft \
-                --features distributed,mpi/mpi-rt-sys-backend --test "$suite" --locked -- --test-threads=1
-            done
-          done
+          cargo test --features system --locked --no-run
+          timeout --kill-after=5s 120s mpiexec --oversubscribe -n 2 \
+            cargo test --features system --locked -- --nocapture --test-threads=1
 
-      - name: Run runtime spatial remap contract tests
+      - name: Run an existing pencil-array suite on two ranks
         run: |
-          set -euo pipefail
-          log=$(mktemp)
-          trap 'rm -f "$log"' EXIT
-          run_one() {
-            if ! "$@" >"$log" 2>&1; then
-              cat "$log"
-              return 1
-            fi
-            cat "$log"
-            grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out' "$log"
-          }
-          for n in 1 4 6; do
-            run_one timeout --kill-after=5s 180s \
-              mpiexec --oversubscribe -n "$n" \
-              cargo --config tools/rsmpi-rt.toml test -p pencil-array \
-                --features mpi/mpi-rt-sys-backend --test spatial_remap --locked -- --nocapture --test-threads=1
-            run_one timeout --kill-after=5s 180s \
-              mpiexec --oversubscribe -n "$n" \
-              cargo --config tools/rsmpi-rt.toml test -p pencil-array \
-                --features mpi/mpi-rt-sys-backend --lib --locked \
-                spatial_remap::tests::mpi_preflight_failure_preserves_all_plan_state -- \
-                --exact --ignored --nocapture --test-threads=1
-          done
+          timeout --kill-after=5s 120s mpiexec --oversubscribe -n 2 \
+            cargo test -p pencil-array --features system --test array_ops --locked -- --test-threads=1
 
   rust:
     runs-on: ubuntu-26.04
@@ -283,21 +223,21 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run library tests
-        run: cargo test --workspace --lib --locked
+        run: cargo test --workspace --features system --lib --locked
 
       - name: Check optional pencil-io targets
-        run: cargo check -p pencil-io --all-features --all-targets --locked
+        run: cargo check -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked
 
       - name: Build pencil-io integration tests
         run: |
-          cargo test -p pencil-io --no-default-features --features mpi --test mpi_io --no-run --locked
-          cargo test -p pencil-io --features parallel-hdf5 --test hdf5_io --no-run --locked
+          cargo test -p pencil-io --no-default-features --features system --test mpi_io --no-run --locked
+          cargo test -p pencil-io --features system,parallel-hdf5 --test hdf5_io --no-run --locked
 
       - name: Check distributed FFT targets
-        run: cargo check -p pencil-fft --features distributed --all-targets --locked
+        run: cargo check -p pencil-fft --features system --all-targets --locked
 
       - name: Run distributed FFT library tests
-        run: cargo test -p pencil-fft --features distributed --lib --locked
+        run: cargo test -p pencil-fft --features system --lib --locked
 
       - name: Run array and FFT MPI matrices
         run: |
@@ -309,7 +249,7 @@ jobs:
             fi
             for n in $ranks; do
               echo "== $suite: $n ranks =="
-              mpiexec --oversubscribe -n "$n" cargo test -p pencil-array \
+              mpiexec --oversubscribe -n "$n" cargo test -p pencil-array --features system \
                 --test "$suite" --locked -- --nocapture --test-threads=1
             done
           done
@@ -318,11 +258,11 @@ jobs:
               if [[ "$n" == 6 && "$suite" == local_transpose ]]; then continue; fi
               echo "== $suite: $n ranks =="
               timeout --foreground 120s mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-array --test "$suite" --locked -- --nocapture --test-threads=1
+                cargo test -p pencil-array --features system --test "$suite" --locked -- --nocapture --test-threads=1
             done
             echo "== distributed_c2c: $n ranks =="
             timeout --foreground 120s mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --test distributed_c2c \
+              cargo test -p pencil-fft --features system --test distributed_c2c \
                 --locked -- --nocapture --test-threads=1
           done
 
@@ -343,124 +283,124 @@ jobs:
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
               cargo test -p pencil-io \
-                --no-default-features --features mpi --lib --locked \
+                --no-default-features --features system --lib --locked \
                 tests::mpi_payload_limit_precedes_allocation -- \
                 --exact --ignored --nocapture --test-threads=1
           done
           run_one timeout --kill-after=5s 240s \
             mpiexec --oversubscribe -n 2 \
-            cargo test -p pencil-io --features parallel-hdf5 --lib --locked \
+            cargo test -p pencil-io --features system,parallel-hdf5 --lib --locked \
               tests::mpi_payload_limit_precedes_allocation -- \
               --exact --ignored --nocapture --test-threads=1
           for n in 1 4 6; do
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-array --test spatial_remap --locked -- \
+              cargo test -p pencil-array --features system --test spatial_remap --locked -- \
                 --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-array --lib --locked \
+              cargo test -p pencil-array --features system --lib --locked \
                 spatial_remap::tests::mpi_preflight_failure_preserves_all_plan_state -- \
                 --exact --ignored --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --test distributed_c2r \
+              cargo test -p pencil-fft --features system --test distributed_c2r \
                 --locked distributed_c2r_one_mpi_binary -- --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed,fftw --test distributed_c2r \
+              cargo test -p pencil-fft --features system,fftw --test distributed_c2r \
                 --locked distributed_c2r_fftw_one_mpi_binary -- --exact --ignored --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --test distributed_r2r \
+              cargo test -p pencil-fft --features system --test distributed_r2r \
                 --locked distributed_r2r_oracle_matrix_and_negative_contracts -- \
                 --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --test distributed_mixed \
+              cargo test -p pencil-fft --features system --test distributed_mixed \
                 --locked mixed_tensor_oracles_and_collective_failures -- \
                 --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --lib --locked \
+              cargo test -p pencil-fft --features system --lib --locked \
                 distributed::tests::in_place_transaction_poison_survives_error_and_panic -- \
                 --exact --nocapture --test-threads=1
             for suite in array_ops timing_overlap multi_input external_views mapped_reduction_alloc; do
               run_one timeout --kill-after=5s 240s \
                 mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-array --test "$suite" --locked -- \
+                cargo test -p pencil-array --features system --test "$suite" --locked -- \
                   --nocapture --test-threads=1
             done
             for suite in timing_overlap r2c_timing_overlap r2r_timing_overlap mixed_timing_overlap; do
               run_one timeout --kill-after=5s 240s \
                 mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-fft --features distributed --test "$suite" --locked -- \
+                cargo test -p pencil-fft --features system --test "$suite" --locked -- \
                   --nocapture --test-threads=1
             done
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed --test collections --locked -- \
+              cargo test -p pencil-fft --features system --test collections --locked -- \
                 --nocapture --test-threads=1
             for matrix in fftw_distributed_native_matrix fftw_distributed_wisdom_only_all_six; do
               run_one timeout --kill-after=5s 240s \
                 mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-fft --features distributed,fftw --test fftw_distributed --locked \
+                cargo test -p pencil-fft --features system,fftw --test fftw_distributed --locked \
                   "$matrix" -- --exact --ignored --nocapture --test-threads=1
             done
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-fft --features distributed,fftw --lib --locked \
+              cargo test -p pencil-fft --features system,fftw --lib --locked \
                 distributed::fftw_tests::fftw_descriptor_and_factory_preflight_all_six -- \
                 --exact --ignored --nocapture --test-threads=1
             for contract in distributed::tests::r2c_overlap_callback_error_and_panic_map_per_rank distributed::mixed::reverse_overlap_tests::reverse_local_routes_run_callbacks_and_independent_spectrum distributed::mixed::reverse_overlap_tests::endpoint_reductions_are_chunked distributed::r2c::endpoint_reduction_tests::endpoint_reductions_are_chunked; do
               run_one timeout --kill-after=5s 240s \
                 mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-fft --features distributed --lib --locked "$contract" -- \
+                cargo test -p pencil-fft --features system --lib --locked "$contract" -- \
                   --exact --ignored --nocapture --test-threads=1
             done
             for suite in named_mpi named_hdf5 new_options collections named_collections hdf5_filters catalog chunked hdf5_session external_views_io; do
               run_one timeout --kill-after=5s 240s \
                 mpiexec --oversubscribe -n "$n" \
-                cargo test -p pencil-io --features parallel-hdf5 --test "$suite" --locked -- \
+                cargo test -p pencil-io --features system,parallel-hdf5 --test "$suite" --locked -- \
                   --nocapture --test-threads=1
             done
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --features parallel-hdf5 --test mpi_session --locked \
+              cargo test -p pencil-io --features system,parallel-hdf5 --test mpi_session --locked \
                 mpi_file_session_lifecycle_and_collective_errors -- --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --features parallel-hdf5 --lib --locked \
+              cargo test -p pencil-io --features system,parallel-hdf5 --lib --locked \
                 tests::post_cleanup_errors_preserve_destination_and_valid_commits -- --exact --nocapture --test-threads=1
           done
           # Issue #38: rank-dependent decomposition mismatch, exact two-rank example.
           for suite in named_mpi named_hdf5; do
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n 2 \
-              cargo test -p pencil-io --features parallel-hdf5 --test "$suite" --locked -- \
+              cargo test -p pencil-io --features system,parallel-hdf5 --test "$suite" --locked -- \
                 --nocapture --test-threads=1
           done
           # Whole-process Rust live-byte peak for the read paths; one rank only.
           run_one timeout --kill-after=5s 240s \
             mpiexec --oversubscribe -n 1 \
-            cargo test -p pencil-io --no-default-features --features mpi \
+            cargo test -p pencil-io --no-default-features --features system \
               --test staging_memory --locked staging_peak_is_one_payload -- \
               --exact --nocapture --test-threads=1
           run_one timeout --kill-after=5s 240s \
             mpiexec --oversubscribe -n 1 \
-            cargo test -p pencil-io --all-features \
+            cargo test -p pencil-io --features system,hdf5,parallel-hdf5 \
               --test staging_memory --locked staging_peak_is_one_payload -- \
               --exact --nocapture --test-threads=1
           run_one timeout --kill-after=5s 240s \
-            cargo test -p pencil-io --features parallel-hdf5 --lib --locked \
+            cargo test -p pencil-io --features system,parallel-hdf5 --lib --locked \
               named_mpi::session::tests::native_cleanup_failstop_children -- --exact --ignored --nocapture --test-threads=1
           run_one timeout --kill-after=5s 120s \
-            cargo test -p pencil-io --features parallel-hdf5 --test mpi_session --locked \
+            cargo test -p pencil-io --features system,parallel-hdf5 --test mpi_session --locked \
               mpi_file_session_active_drop_is_failstop -- --exact --ignored --nocapture --test-threads=1
           # Ordinary host tests: do not pass --ignored to these exact filters.
           for contract in backend::tests::map_local_preserves_failure_kind distributed::fftw_tests::backend_descriptor_flags distributed::fftw_tests::native_operation_words_do_not_collide; do
             run_one timeout --kill-after=5s 120s \
-              cargo test -p pencil-fft --features distributed,fftw --lib --locked "$contract" -- \
+              cargo test -p pencil-fft --features system,fftw --lib --locked "$contract" -- \
                 --exact --nocapture --test-threads=1
           done
           for native in tests::native_f32 tests::native_f64 tests::native_f32_wisdom_only_all_kinds tests::native_f64_wisdom_only_all_kinds tests::native_r2r_alias_modes_wisdom_and_concurrency ffi::tests::native_r2r_flags_and_threads ffi::tests::native_c2c_second_plan_failure_drops_first_and_resets_threads ffi::tests::native_partial_construction_cleanup ffi::tests::native_wisdom_lifetime_and_threads ffi::tests::native_cached_thread_load_failure ffi::tests::native_initialization_order ffi::tests::native_timelimit_calls_on_success_error_and_unwind; do
@@ -480,7 +420,7 @@ jobs:
           done
           # MPI is initialized once in this separate one-rank test process.
           run_one timeout --kill-after=5s 120s \
-            cargo test -p pencil-fft --features distributed --lib --locked \
+            cargo test -p pencil-fft --features system --lib --locked \
               distributed::r2r::tests::in_place_error_panic_backend_and_short_workspace_poison_contracts -- \
               --ignored --exact --nocapture --test-threads=1
 
@@ -492,16 +432,16 @@ jobs:
           set -euo pipefail
           artifacts=$(mktemp)
           trap 'rm -f "$artifacts"' EXIT
-          cargo test -p pencil-fft --features distributed,fftw --lib --no-run --locked --message-format=json >"$artifacts"
+          cargo test -p pencil-fft --features system,fftw --lib --no-run --locked --message-format=json >"$artifacts"
           binary=$(python3 -c 'import json,sys; records=[json.loads(line) for line in open(sys.argv[1])]; paths=[r["executable"] for r in records if r.get("reason")=="compiler-artifact" and r.get("executable") and r["target"]["name"]=="pencil_fft" and r["profile"]["test"]]; assert len(paths)==1,paths; print(paths[0])' "$artifacts")
           bash crates/pencil-fft/tests/collections_panic.sh "$binary" /tmp/pencil-collections-panic-ci
 
       - name: Check legacy error-enum compatibility and per-axis Fourier signs
         run: |
           set -euo pipefail
-          cargo test -p pencil-fft --features distributed --test legacy_error_compat --locked
-          cargo test -p pencil-fft --features distributed,fftw --test legacy_local_error_compat --locked
-          cargo build -p pencil-fft --features distributed --example mpi_directions --locked
+          cargo test -p pencil-fft --features system --test legacy_error_compat --locked
+          cargo test -p pencil-fft --features system,fftw --test legacy_local_error_compat --locked
+          cargo build -p pencil-fft --features system --example mpi_directions --locked
           log=$(mktemp)
           trap 'rm -f "$log"' EXIT
           for n in 1 4 6; do
@@ -518,7 +458,7 @@ jobs:
         run: |
           for n in 1 2 4 6; do
             timeout --foreground 120s mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --no-default-features --features mpi --test mpi_io --locked \
+              cargo test -p pencil-io --no-default-features --features system --test mpi_io --locked \
                 -- --nocapture --test-threads=1
           done
 
@@ -526,46 +466,46 @@ jobs:
         run: |
           for n in 1 2 4 6; do
             timeout --foreground 180s mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --features parallel-hdf5 --test hdf5_io --locked \
+              cargo test -p pencil-io --features system,parallel-hdf5 --test hdf5_io --locked \
                 -- --nocapture --test-threads=1
           done
 
       - name: Run pencil-io post-cleanup unit test in a fresh process
         run: |
           timeout --foreground 120s mpiexec --oversubscribe -n 1 \
-            cargo test -p pencil-io --features parallel-hdf5 --lib \
+            cargo test -p pencil-io --features system,parallel-hdf5 --lib \
               post_cleanup_errors_preserve_destination_and_valid_commits --locked \
               -- --nocapture --test-threads=1
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --features system --all-targets --locked -- -D warnings
 
       - name: Run distributed FFT Clippy
-        run: cargo clippy -p pencil-fft --features distributed --all-targets --locked -- -D warnings
+        run: cargo clippy -p pencil-fft --features system --all-targets --locked -- -D warnings
 
       - name: Check all FFT backend combinations
         run: |
           cargo check -p pencil-fft --features fftw --all-targets --locked
-          cargo clippy -p pencil-fft --all-features --all-targets --locked -- -D warnings
-          cargo test -p pencil-fft --all-features --doc --locked
+          cargo clippy -p pencil-fft --features system,fftw --all-targets --locked -- -D warnings
+          cargo test -p pencil-fft --features system,fftw --doc --locked
 
       - name: Run pencil-io Clippy with optional HDF5
-        run: cargo clippy -p pencil-io --all-features --all-targets --locked -- -D warnings
+        run: cargo clippy -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked -- -D warnings
 
       - name: Build API documentation
-        run: cargo doc --workspace --no-deps --locked
+        run: cargo doc --workspace --features system --no-deps --locked
 
       - name: Build distributed FFT documentation
-        run: cargo doc -p pencil-fft --features distributed --no-deps --locked
+        run: cargo doc -p pencil-fft --features system --no-deps --locked
 
       - name: Build pencil-io documentation with optional HDF5
-        run: cargo doc -p pencil-io --all-features --no-deps --locked
+        run: cargo doc -p pencil-io --features system,hdf5,parallel-hdf5 --no-deps --locked
 
       - name: Test documentation examples and public API restrictions
-        run: cargo test --workspace --doc --locked -- --show-output
+        run: cargo test --workspace --features system --doc --locked -- --show-output
 
       - name: Test distributed FFT documentation
-        run: cargo test -p pencil-fft --features distributed --doc --locked -- --show-output
+        run: cargo test -p pencil-fft --features system --doc --locked -- --show-output
 
       - name: Save Cargo build data
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -608,18 +548,18 @@ jobs:
           dpkg-query -W openmpi-bin libopenmpi-dev
           dpkg-query -W libhdf5-openmpi-dev
       - name: Check minimum supported Rust
-        run: cargo +1.96.0 check --workspace --all-targets --locked
+        run: cargo +1.96.0 check --workspace --features system --all-targets --locked
 
       - name: Check pencil-io with optional HDF5 on minimum supported Rust
-        run: cargo +1.96.0 check -p pencil-io --all-features --all-targets --locked
+        run: cargo +1.96.0 check -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked
 
       - name: Check distributed FFT on minimum supported Rust
-        run: cargo +1.96.0 check -p pencil-fft --features distributed --all-targets --locked
+        run: cargo +1.96.0 check -p pencil-fft --features system --all-targets --locked
 
       - name: Check optional native FFTW targets on minimum supported Rust
         run: |
           cargo +1.96.0 check -p pencil-fft --features fftw --all-targets --locked
-          cargo +1.96.0 check -p pencil-fft --all-features --all-targets --locked
+          cargo +1.96.0 check -p pencil-fft --features system,fftw --all-targets --locked
 
   mpi-io-openmpi4:
     # Open MPI 4.1.6 OMPIO can lose collective writes without range locks
@@ -666,7 +606,7 @@ jobs:
 
       - name: Build pencil-io MPI-IO tests
         run: |
-          cargo test -p pencil-io --no-default-features --features mpi --locked --no-run --lib \
+          cargo test -p pencil-io --no-default-features --features system --locked --no-run --lib \
             --test named_mpi --test mpi_io --test mpi_session --test new_options \
             --test collections --test named_collections --test catalog --test chunked \
             --test external_views_io --test staging_memory
@@ -695,28 +635,28 @@ jobs:
               if [[ "$suite" == named_mpi ]]; then
                 run_named "NAMED_MPI_PASSED ranks=$n" timeout --kill-after=5s 240s \
                   mpiexec --oversubscribe -n "$n" \
-                  cargo test -p pencil-io --no-default-features --features mpi --test "$suite" \
+                  cargo test -p pencil-io --no-default-features --features system --test "$suite" \
                     --locked -- --nocapture --test-threads=1
               else
                 run_one timeout --kill-after=5s 240s \
                   mpiexec --oversubscribe -n "$n" \
-                  cargo test -p pencil-io --no-default-features --features mpi --test "$suite" \
+                  cargo test -p pencil-io --no-default-features --features system --test "$suite" \
                     --locked -- --nocapture --test-threads=1
               fi
             done
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --no-default-features --features mpi --test mpi_session \
+              cargo test -p pencil-io --no-default-features --features system --test mpi_session \
                 --locked mpi_file_session_lifecycle_and_collective_errors -- \
                 --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --no-default-features --features mpi --lib --locked \
+              cargo test -p pencil-io --no-default-features --features system --lib --locked \
                 tests::post_cleanup_errors_preserve_destination_and_valid_commits -- \
                 --exact --nocapture --test-threads=1
             run_one timeout --kill-after=5s 240s \
               mpiexec --oversubscribe -n "$n" \
-              cargo test -p pencil-io --no-default-features --features mpi --lib --locked \
+              cargo test -p pencil-io --no-default-features --features system --lib --locked \
                 tests::mpi_payload_limit_precedes_allocation -- \
                 --exact --ignored --nocapture --test-threads=1
             if [[ "$n" == 4 ]]; then
@@ -724,7 +664,7 @@ jobs:
               for _ in 1 2 3 4 5 6 7 8 9; do
                 run_named "NAMED_MPI_PASSED ranks=$n" timeout --kill-after=5s 240s \
                   mpiexec --oversubscribe -n "$n" \
-                  cargo test -p pencil-io --no-default-features --features mpi --test named_mpi \
+                  cargo test -p pencil-io --no-default-features --features system --test named_mpi \
                     --locked -- --nocapture --test-threads=1
               done
             fi
@@ -732,7 +672,7 @@ jobs:
           # Whole-process Rust live-byte peak for the read paths; one rank only.
           run_one timeout --kill-after=5s 240s \
             mpiexec --oversubscribe -n 1 \
-            cargo test -p pencil-io --no-default-features --features mpi \
+            cargo test -p pencil-io --no-default-features --features system \
               --test staging_memory --locked staging_peak_is_one_payload -- \
               --exact --nocapture --test-threads=1
 
@@ -750,8 +690,8 @@ jobs:
             grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out' "$log"
           }
           run_one timeout --kill-after=5s 240s \
-            cargo test -p pencil-io --no-default-features --features mpi --lib --locked \
+            cargo test -p pencil-io --no-default-features --features system --lib --locked \
               named_mpi::session::tests::native_cleanup_failstop_children -- --exact --ignored --nocapture --test-threads=1
           run_one timeout --kill-after=5s 120s \
-            cargo test -p pencil-io --no-default-features --features mpi --test mpi_session --locked \
+            cargo test -p pencil-io --no-default-features --features system --test mpi_session --locked \
               mpi_file_session_active_drop_is_failstop -- --exact --ignored --nocapture --test-threads=1

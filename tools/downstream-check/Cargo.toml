@@ -1,0 +1,19 @@
+[package]
+name = "downstream-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Stand-in for a downstream crate (e.g. sphaira-rs) with its own direct rsmpi-rt dependency"
+
+# Not a member of the pencil-rs workspace: it must resolve like an external consumer.
+[workspace]
+
+[features]
+default = []
+system = ["pencil-array/system", "mpi/mpi-sys-backend"]
+
+[dependencies]
+pencil-array = { path = "../../crates/pencil-array" }
+# The same spelling tenferro-mpi uses. If pencil-array were on another 0.x, this
+# would be a second crate and the test below would not compile.
+mpi = { package = "rsmpi-rt", version = "0.9.0", default-features = false }

@@ -33,8 +33,8 @@ From the workspace root, with the required native development tools available:
 ```sh
 cargo fmt --all -- --check
 cargo metadata --no-deps --format-version 1 --locked
-cargo package --workspace --all-features --locked
-cargo publish --dry-run --workspace --all-features --locked
+cargo package --workspace --features system,fftw,hdf5,parallel-hdf5 --locked
+cargo publish --dry-run --workspace --features system,fftw,hdf5,parallel-hdf5 --locked
 ```
 
 Verify package builds with the installed exact MSRV compiler as well:
@@ -43,7 +43,7 @@ Verify package builds with the installed exact MSRV compiler as well:
 RUSTC="$(rustup which --toolchain 1.96.0 rustc)" \
 RUSTDOC="$(rustup which --toolchain 1.96.0 rustdoc)" \
 CARGO_TARGET_DIR=target/package-msrv \
-  cargo +stable package --workspace --all-features --locked
+  cargo +stable package --workspace --features system,fftw,hdf5,parallel-hdf5 --locked
 ```
 
 This uses stable Cargo's workspace staging while compiling with Rust 1.96.0;
@@ -71,10 +71,10 @@ Compile all targets and run library/doctest checks on both toolchains:
 ```sh
 for toolchain in stable 1.96.0; do
   export CARGO_TARGET_DIR="target/release-check-$toolchain"
-  cargo +"$toolchain" check --workspace --all-features --all-targets --locked
-  cargo +"$toolchain" test --workspace --all-features --all-targets --no-run --locked
-  cargo +"$toolchain" test --workspace --all-features --lib --locked -- --test-threads=1
-  cargo +"$toolchain" test --workspace --all-features --doc --locked
+  cargo +"$toolchain" check --workspace --features system,fftw,hdf5,parallel-hdf5 --all-targets --locked
+  cargo +"$toolchain" test --workspace --features system,fftw,hdf5,parallel-hdf5 --all-targets --no-run --locked
+  cargo +"$toolchain" test --workspace --features system,fftw,hdf5,parallel-hdf5 --lib --locked -- --test-threads=1
+  cargo +"$toolchain" test --workspace --features system,fftw,hdf5,parallel-hdf5 --doc --locked
 done
 unset CARGO_TARGET_DIR
 cargo +stable test -p pencil-fft --no-default-features --locked
@@ -98,7 +98,7 @@ done
 ```
 
 For each SHA you intend to publish, record a CI run in which all six required
-checks passed: `local-fft`, `rust`, `msrv`, `serial-hdf5`, `rsmpi-rt`, and
+checks passed: `local-fft`, `rust`, `msrv`, `serial-hdf5`, `downstream-communicator`, and
 `mpi-io-openmpi4`. Record the run URL plus the OS, Rust, MPI, and HDF5 versions
 that each job reports from its "Record toolchain versions" step.
 

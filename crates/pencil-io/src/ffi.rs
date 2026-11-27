@@ -781,7 +781,9 @@ pub(crate) mod hdf5 {
             // and the null info handle is a valid MPI constant.
             #[cfg(test)]
             super::inspect_info_argument(info, 2);
-            unsafe { h5::h5p::H5Pset_fapl_mpio(fapl, comm, info) }
+            // hdf5-metno-sys is typed against crates.io `mpi-sys`, while rsmpi-rt's handles
+            // are `rsmpi-sys` newtypes around the same C pointers (Open MPI ABI).
+            unsafe { h5::h5p::H5Pset_fapl_mpio(fapl, comm.0 as _, info.0 as _) }
         })
     }
 
