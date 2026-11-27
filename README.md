@@ -930,7 +930,7 @@ set -euo pipefail
 cargo fmt --all -- --check
 cargo test -p pencil-fft --no-default-features --locked
 cargo tree -p pencil-fft --no-default-features --edges normal --locked | tee /tmp/pencil-fft-local-tree.txt
-if grep -Eq '(^|[[:space:]])(mpi|pencil-array)([[:space:]]|$)' /tmp/pencil-fft-local-tree.txt; then exit 1; fi
+if grep -Eq '(^|[[:space:]])(mpi|rsmpi-rt|pencil-array)([[:space:]]|$)' /tmp/pencil-fft-local-tree.txt; then exit 1; fi
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p pencil-fft --features system --all-targets --locked -- -D warnings
 cargo test --workspace --lib --locked
@@ -977,7 +977,7 @@ for n in 1 4 6; do
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
     cargo test -p pencil-fft --features system --test distributed_c2r \
       --locked -- --nocapture --test-threads=1 || exit 1
-  # Optional FFTW counterpart: add --features distributed,fftw and run
+  # Optional FFTW counterpart: add --features system,fftw and run
   # distributed_c2r_fftw_one_mpi_binary with --exact --ignored.
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
     cargo test -p pencil-fft --features system --test distributed_r2r \

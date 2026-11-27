@@ -10,8 +10,8 @@ MPIEXEC=${MPIEXEC:-mpiexec}
 
 # Validate selectors before invoking Julia, Cargo, or the MPI launcher.
 case "${PENCIL_FFT_BACKEND-rustfft}" in
-    rustfft) features=distributed ;;
-    fftw) features=distributed,fftw ;;
+    rustfft) features=system ;;
+    fftw) features=system,fftw ;;
     *) printf 'invalid PENCIL_FFT_BACKEND: %s\n' "$PENCIL_FFT_BACKEND" >&2; exit 1 ;;
 esac
 case "${PENCIL_FFT_DIRECTION_ORDER-native-first}" in

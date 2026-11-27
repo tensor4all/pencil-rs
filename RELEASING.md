@@ -91,7 +91,7 @@ for n in 1 4 6; do
   timeout --kill-after=5s 240s mpiexec --oversubscribe -n "$n" \
     cargo +stable test -p pencil-array --test alltoallv_transpose --locked -- --test-threads=1
   timeout --kill-after=5s 240s mpiexec --oversubscribe -n "$n" \
-    cargo +stable test -p pencil-fft --features distributed --test distributed_c2c --locked -- --test-threads=1
+    cargo +stable test -p pencil-fft --features system --test distributed_c2c --locked -- --test-threads=1
   timeout --kill-after=5s 240s mpiexec --oversubscribe -n "$n" \
     cargo +stable test -p pencil-io --features parallel-hdf5 --test hdf5_io --locked -- --test-threads=1
 done
@@ -103,7 +103,7 @@ checks passed: `local-fft`, `rust`, `msrv`, `serial-hdf5`, `downstream-communica
 that each job reports from its "Record toolchain versions" step.
 
 The five pre-existing jobs run on Ubuntu 26.04; the MPI jobs (`rust`, `msrv`,
-`rsmpi-rt`) currently use Open MPI 5.0.10. The `mpi-io-openmpi4` job runs on
+`downstream-communicator`) currently use Open MPI 5.0.10. The `mpi-io-openmpi4` job runs on
 Ubuntu 24.04 and requires Open MPI 4.1.x; the current package is 4.1.6. Record
 the version that job reports and whether it applied the workaround from
 [README.md](README.md#open-mpi-416-collective-write-data-loss). A release

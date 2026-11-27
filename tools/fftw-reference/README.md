@@ -32,8 +32,8 @@ JULIA=julia MPIEXEC=mpiexec \
 ```
 
 The default/unset `PENCIL_FFT_BACKEND` (or explicit `rustfft`) builds
-`--features distributed`. Set `PENCIL_FFT_BACKEND=fftw` to build
-`--features distributed,fftw` and actually configure every plan with
+`--features system`. Set `PENCIL_FFT_BACKEND=fftw` to build
+`--features system,fftw` and actually configure every plan with
 `with_fftw` (ESTIMATE). This requires installed native FFTW runtimes for
 both f32 and f64; missing libraries fail the explicit run, never fall back
 to RustFFT. Ordinary Cargo tests need neither Julia nor native FFTW.
@@ -69,7 +69,7 @@ RUSTUP_HOME=/tmp/pencil-rs-rustup-msrv.0vuEDM RUSTUP_TOOLCHAIN=1.96.0 \
 CARGO_TARGET_DIR=$(mktemp -d /tmp/pencil-reference-msrv-target.XXXXXX) \
 PENCIL_FFT_THREADS=2 PENCIL_FFT_BACKEND=fftw PENCIL_FFT_DIRECTION_ORDER=native-first ./tools/fftw-reference/check.sh
 # Pure parser checks (no environment mutation, MPI launch, or runtime loading):
-cargo test -p pencil-fft --features distributed --test fftw_reference --locked
+cargo test -p pencil-fft --features system --test fftw_reference --locked
 ```
 
 Set `JULIA` or `MPIEXEC` explicitly when they are not on `PATH`. The script
@@ -163,7 +163,7 @@ The standalone numerical regression also exercises in-place execution, partial
 selection, core identity, and rank-dependent configuration rejection:
 
 ```bash
-cargo build -p pencil-fft --features distributed --example mpi_directions
+cargo build -p pencil-fft --features system --example mpi_directions
 for ranks in 1 4 6; do
     timeout --kill-after=5s 120s mpiexec -n "$ranks" target/debug/examples/mpi_directions
 done

@@ -13,7 +13,7 @@ default = []
 system = ["pencil-array/system", "mpi/mpi-sys-backend"]
 
 [dependencies]
-pencil-array = { path = "../../crates/pencil-array" }
+pencil-array = { path = "../../crates/pencil-array", default-features = false }
 # The same spelling tenferro-mpi uses. If pencil-array were on another 0.x, this
 # would be a second crate and the test below would not compile.
 mpi = { package = "rsmpi-rt", version = "0.9.0", default-features = false }

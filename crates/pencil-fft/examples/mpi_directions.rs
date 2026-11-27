@@ -556,5 +556,5 @@ fn main() {
 }
 #[cfg(not(feature = "distributed"))]
 fn main() {
-    eprintln!("requires --features distributed");
+    eprintln!("requires --features system");
 }
