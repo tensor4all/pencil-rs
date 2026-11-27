@@ -290,7 +290,7 @@ strided line kernels. Inverse/raw-backward normalization includes only
 selected axes. `AxisSelection::all()` preserves the legacy transform exactly.
 
 Enable the feature in this workspace with
-`cargo check -p pencil-fft --features distributed --locked`. The public
+`cargo check -p pencil-fft --features system --locked`. The public
 `C2cPlan` supports `N >= 2` and `1 <= M < N`, canonical identity input
 pencils, exact extra shapes, reusable plan-bound
 `C2cOutOfPlaceWorkspace`, and input-preserving forward, normalized inverse,
@@ -567,7 +567,7 @@ cargo test -p pencil-io --no-default-features --features hdf5 --locked
 cargo clippy -p pencil-io --no-default-features --features hdf5 --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p pencil-io --no-default-features --features hdf5 --no-deps --locked
 cargo tree -p pencil-io --no-default-features --features hdf5 --edges normal,build --prefix none --locked
-# The normal/build tree must contain no mpi, mpi-sys, pencil-array, or build-probe-mpi.
+# The normal/build tree must contain no mpi, rsmpi-rt, mpi-sys, rsmpi-sys, pencil-array, or build-probe-mpi.
 ```
 
 ## Native collective I/O
@@ -784,7 +784,7 @@ With parallel HDF5 configured, run the corresponding HDF5 matrix:
 ```bash
 for n in 1 4 6; do
   timeout --foreground 180s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-io --features parallel-hdf5 --test hdf5_io --locked \
+    cargo test -p pencil-io --features system,parallel-hdf5 --test hdf5_io --locked \
       -- --nocapture --test-threads=1
 done
 ```
@@ -794,20 +794,20 @@ The feature-enabled build checks used by CI are:
 ```bash
 pkg-config --exists hdf5-openmpi
 pkg-config --exists hdf5
-cargo check -p pencil-io --all-features --all-targets --locked
-cargo test -p pencil-io --no-default-features --features mpi --test mpi_io --no-run --locked
-cargo test -p pencil-io --features parallel-hdf5 --test hdf5_io --no-run --locked
-cargo clippy -p pencil-io --all-features --all-targets --locked -- -D warnings
-cargo doc -p pencil-io --all-features --no-deps --locked
+cargo check -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked
+cargo test -p pencil-io --no-default-features --features system --test mpi_io --no-run --locked
+cargo test -p pencil-io --features system,parallel-hdf5 --test hdf5_io --no-run --locked
+cargo clippy -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked -- -D warnings
+cargo doc -p pencil-io --features system,hdf5,parallel-hdf5 --no-deps --locked
 timeout --foreground 120s mpiexec --oversubscribe -n 1 \
-  cargo test -p pencil-io --features parallel-hdf5 --lib \
+  cargo test -p pencil-io --features system,parallel-hdf5 --lib \
   post_cleanup_errors_preserve_destination_and_valid_commits --locked \
   -- --nocapture --test-threads=1
 ```
 
 For the declared MSRV, run
 `cargo +1.96.0 check --workspace --all-targets --locked` and
-`cargo +1.96.0 check -p pencil-io --all-features --all-targets --locked` before the native
+`cargo +1.96.0 check -p pencil-io --features system,hdf5,parallel-hdf5 --all-targets --locked` before the native
 matrix.
 
 After building the HDF5 test binary, record its resolved native libraries before
@@ -822,7 +822,7 @@ pkg-config --modversion hdf5-openmpi
 
 ## Prerequisites
 
-The default build uses upstream rsmpi and native MPI bindings:
+The build uses `rsmpi-rt` 0.9.0 with its `system` backend (see below) and native MPI bindings:
 
 - Rust stable, with a minimum supported Rust version of 1.96; Rust 1.85–1.95 are
   no longer supported
@@ -838,7 +838,7 @@ The default build uses upstream rsmpi and native MPI bindings:
 CI covers two stacks:
 
 - The five existing jobs run on Ubuntu 26.04. The MPI jobs (`rust`, `msrv`,
-  `rsmpi-rt`) currently see Open MPI 5.0.10. `local-fft` and `serial-hdf5` have
+  `downstream-communicator`) currently see Open MPI 5.0.10. `local-fft` and `serial-hdf5` have
   no MPI; `serial-hdf5` uses serial HDF5 only.
 - `mpi-io-openmpi4` runs on Ubuntu 24.04 and requires Open MPI 4.1.x. The
   current package is 4.1.6. It covers MPI-IO only, with the workaround below.
@@ -883,59 +883,39 @@ locks, so prefer updating there. No workaround repairs files that are already
 missing data; rewrite files written in an affected environment. pencil-io does
 not change these settings itself.
 
-### Experimental runtime MPI (rsmpi-rt)
+### Choosing the MPI backend
 
-`pencil-array` and distributed `pencil-fft` can instead use
-[rsmpi-rt](https://github.com/tensor4all/rsmpi-rt), without MPI headers, `mpicc`,
-or libclang at Rust build time. Their public APIs are unchanged. This is an
-experimental opt-in, not a replacement for the default upstream MPI dependency.
-MPI default features are disabled: `pencil-rs` does not need `user-operations`
-(libffi), and runtime builds must not enable the fork's default `mpi-sys-backend`.
+The MPI crates use [`rsmpi-rt`](https://crates.io/crates/rsmpi-rt) 0.9.0 under the
+library name `mpi`, the same crate and version as `tenferro-mpi`, so an application
+using both shares one `Communicator` type and one MPI initialization. Cargo does not
+unify 0.8.x with 0.9.x: keep your own direct dependency on the same version.
 
-From the repository root, in a **separate checkout**:
-
-```bash
-cargo --config tools/rsmpi-rt.toml check -p pencil-array -p pencil-fft \
-  --features distributed,mpi/mpi-rt-sys-backend --all-targets
-
-# Runtime only: use MPIwrapper built against the MPI used by mpiexec.
-# This must be libmpiwrapper.so, not the native libmpi.so.
-export MPI_RT_LIB=/absolute/path/to/libmpiwrapper.so
-mpiexec -n 4 cargo --config tools/rsmpi-rt.toml test -p pencil-array \
-  --features mpi/mpi-rt-sys-backend --test topology --locked -- --test-threads=1
-mpiexec -n 4 cargo --config tools/rsmpi-rt.toml test -p pencil-fft \
-  --features distributed,mpi/mpi-rt-sys-backend --test distributed_c2c \
-  --locked -- --test-threads=1
-```
-
-The config pins the fork's Git revision via Cargo's `[patch.crates-io]`.
-The first command intentionally omits `--locked`: changing dependency sources
-updates `Cargo.lock`. Keep that runtime lockfile in your separate checkout;
-the repository's committed lockfile remains on upstream rsmpi. Pass both the
-config and runtime feature on every MPI build. The fork's two backend features
-are mutually exclusive; do not enable its default features or `mpi-sys-backend`.
-See [rsmpi-rt's setup instructions](https://github.com/tensor4all/rsmpi-rt#mpi-rt-sys-backend-recommended-for-this-fork)
-for building MPIwrapper. The CI job pins and builds MPIwrapper, checks the absence
-of native MPI build dependencies, and runs topology tests at 1/4 ranks plus
-transpose, collective, and distributed FFT tests at 1/4/6 ranks.
-
-In a consuming application, put the patch at **your workspace root** (dependency
-patches are not transitive), and enable the runtime backend on your direct MPI
-dependency so it shares the same types as `pencil-array` and `pencil-fft`:
+`rsmpi-rt` needs exactly one backend, and none is on by default. Enable the feature
+named `system` on every pencil crate you use (`pencil-array`, `pencil-fft`,
+`pencil-io`); it is the same spelling `tenferro-mpi` uses:
 
 ```toml
-[dependencies]
-mpi = { version = "=0.8.2", default-features = false, features = ["mpi-rt-sys-backend"] }
-
-[patch.crates-io]
-mpi = { git = "https://github.com/tensor4all/rsmpi-rt", rev = "736d45cdfd816e4013f9b46801d7ee5eb17ad2e8" }
+pencil-array = { version = "0.1.0", features = ["system"] }
+pencil-fft = { version = "0.1.0", features = ["system"] }   # implies `distributed`
+mpi = { package = "rsmpi-rt", version = "0.9.0", default-features = false }
 ```
 
-**Not supported yet:** `pencil-io`'s MPI backends, including MPI-IO and parallel
-HDF5. They use native FFI constants and handles which differ from rsmpi-rt's
-MPIABI interface; parallel HDF5 also needs an ABI-compatible MPI stack. Do not
-use `--workspace` with this runtime configuration. Default local `pencil-fft`
-and serial-only `pencil-io` remain MPI-free and need no runtime MPI patch.
+`system` is rsmpi-rt's `mpi-sys-backend` and needs the native MPI headers, `mpicc`
+and libclang at build time. A `runtime` feature (rsmpi-rt's `mpi-native-sys-backend`)
+is **not offered**: in rsmpi-rt 0.9.0 it stubs `MPI_Allreduce`, `MPI_Alltoallv`,
+`MPI_Cart_create`, `MPI_Dims_create` and the reduction operations that pencil-array
+calls, so it has not been tested and does not work for these crates. The old
+`mpi-rt-sys-backend`, `MPI_RT_LIB` and `tools/rsmpi-rt.toml` patch no longer exist.
+`tools/downstream-check` is a minimal downstream crate with its own `rsmpi-rt`
+dependency that passes its communicator into `pencil-array`:
+
+```bash
+cd tools/downstream-check
+cargo tree -i rsmpi-rt --features system   # exactly one rsmpi-rt v0.9.0
+mpiexec -n 2 cargo test --features system
+```
+
+Local `pencil-fft` (no features) and serial-only `pencil-io` remain MPI-free.
 
 ## Verification
 
@@ -949,14 +929,14 @@ cargo test -p pencil-fft --no-default-features --locked
 cargo tree -p pencil-fft --no-default-features --edges normal --locked | tee /tmp/pencil-fft-local-tree.txt
 if grep -Eq '(^|[[:space:]])(mpi|pencil-array)([[:space:]]|$)' /tmp/pencil-fft-local-tree.txt; then exit 1; fi
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo clippy -p pencil-fft --features distributed --all-targets --locked -- -D warnings
+cargo clippy -p pencil-fft --features system --all-targets --locked -- -D warnings
 cargo test --workspace --lib --locked
-cargo check -p pencil-fft --features distributed --all-targets --locked
-cargo test -p pencil-fft --features distributed --lib --locked
-cargo test -p pencil-fft --features distributed --lib distributed::r2r::tests::in_place_error_panic_backend_and_short_workspace_poison_contracts --locked -- --ignored --exact --nocapture --test-threads=1
+cargo check -p pencil-fft --features system --all-targets --locked
+cargo test -p pencil-fft --features system --lib --locked
+cargo test -p pencil-fft --features system --lib distributed::r2r::tests::in_place_error_panic_backend_and_short_workspace_poison_contracts --locked -- --ignored --exact --nocapture --test-threads=1
 for n in 1 4 6; do
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-fft --features distributed --lib --locked \
+    cargo test -p pencil-fft --features system --lib --locked \
       distributed::tests::in_place_transaction_poison_survives_error_and_panic \
       -- --exact --nocapture --test-threads=1
 done
@@ -980,33 +960,33 @@ timeout --foreground 120s mpiexec -n 4 cargo test -p pencil-array --test collect
 timeout --foreground 120s mpiexec -n 6 cargo test -p pencil-array --test collectives --locked -- --nocapture --test-threads=1
 
 cargo doc --workspace --no-deps --locked
-cargo doc -p pencil-fft --features distributed --no-deps --locked
+cargo doc -p pencil-fft --features system --no-deps --locked
 cargo test --workspace --doc --locked -- --show-output
-cargo test -p pencil-fft --features distributed --doc --locked -- --show-output
+cargo test -p pencil-fft --features system --doc --locked -- --show-output
 # The distributed suites cover C2C, R2C/C2R, R2R, and mixed-axis plans over
 # Alltoallv/P2P; distributed C2C, R2C/C2R, R2R, and mixed plans also have
 # in-place APIs; local C2C
 # and local R2C also have in-place APIs.
 for n in 1 4 6; do
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-fft --features distributed --test distributed_c2c \
+    cargo test -p pencil-fft --features system --test distributed_c2c \
       --locked -- --nocapture --test-threads=1 || exit 1
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-fft --features distributed --test distributed_c2r \
+    cargo test -p pencil-fft --features system --test distributed_c2r \
       --locked -- --nocapture --test-threads=1 || exit 1
   # Optional FFTW counterpart: add --features distributed,fftw and run
   # distributed_c2r_fftw_one_mpi_binary with --exact --ignored.
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-fft --features distributed --test distributed_r2r \
+    cargo test -p pencil-fft --features system --test distributed_r2r \
       --locked -- --nocapture --test-threads=1 || exit 1
   timeout --foreground --kill-after=5s 120s mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-fft --features distributed --test distributed_mixed \
+    cargo test -p pencil-fft --features system --test distributed_mixed \
       --locked -- --nocapture --test-threads=1 || exit 1
 done
 ```
 
 `main` is protected by a GitHub ruleset. The ruleset enforces pull requests,
-six required checks (`local-fft`, `rust`, `msrv`, `serial-hdf5`, `rsmpi-rt`,
+six required checks (`local-fft`, `rust`, `msrv`, `serial-hdf5`, `downstream-communicator`,
 and `mpi-io-openmpi4`), and branches up to date with `main` (strict). Required
 approvals are 0.
 
@@ -1022,7 +1002,7 @@ four, and six ranks:
 export OMPI_MCA_fs_ufs_lock_algorithm=3
 for n in 1 4 6; do
   mpiexec --oversubscribe -n "$n" \
-    cargo test -p pencil-io --no-default-features --features mpi \
+    cargo test -p pencil-io --no-default-features --features system \
     --test mpi_io --locked -- --test-threads=1
 done
 ```

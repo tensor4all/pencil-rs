@@ -9,10 +9,16 @@ description = "Local and optional MPI-distributed FFTs on pencil arrays"
 readme = "README.md"
 include = ["Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "NOTICE.md", "src/**/*.rs", "tests/**/*.rs", "examples/**/*.rs", "tests/collections_panic.sh"]
 
+[package.metadata.docs.rs]
+# rsmpi-rt does not compile without a backend.
+features = ["system"]
+
 [features]
 default = []
 distributed = ["dep:mpi", "dep:pencil-array", "mpi/complex"]
 fftw = ["dep:pencil-fftw"]
+# Same name as tenferro-mpi's; implies `distributed`. See pencil-array for why there is no `runtime`.
+system = ["distributed", "pencil-array/system"]
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["extern_crate_alloc"] }
